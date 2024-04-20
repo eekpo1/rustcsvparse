@@ -1,8 +1,9 @@
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter, write};
 use std::fs::{File};
 use std::io::Read;
-use regex::Regex;
+use fancy_regex::Regex;
 
 static COMMA: char = '\x2C';
 static LF: char = '\x0A';
@@ -10,7 +11,7 @@ static LF: char = '\x0A';
 static CR: char = '\x0D';
 
 #[derive(Debug)]
-struct FileAccessError;
+pub struct FileAccessError;
 
 impl Error for FileAccessError {}
 
@@ -21,33 +22,54 @@ impl Display for FileAccessError {
 }
 
 pub struct CSVParser<'a> {
-    file: File,
+    file: String,
     has_headers: bool,
     delimiter: &'a str,
 }
 
 impl <'a> CSVParser<'a> {
     pub fn new(file_name: &str, has_headers: bool, delimiter: &'a str) -> Result<CSVParser<'a>, FileAccessError> {
-        if let Ok(f) = File::open(file_name) {
-            return Ok(CSVParser { file: f, has_headers, delimiter });
+        if let Ok(mut f) = File::open(file_name) {
+            let mut buf = String::new();
+            f.read_to_string(&mut buf).expect("EOF not detected in file");
+            return Ok(CSVParser { file: buf, has_headers, delimiter });
         }
         Err(FileAccessError)
     }
 
-    pub fn each_line<F, T>(&mut self, func: F) where F: Fn() -> T {
+    pub fn each_line<F: Fn(String) -> String>(&mut self, func: F) -> Vec<String>  {
         let all_lines = self.read_all();
+
+        all_lines
+            .iter()
+            .map(|line_vector| line_vector.join(","))
+            .map(|line| func(line))
+            .collect::<Vec<String>>()
+    }
+
+    pub fn with_headers(&mut self) -> Vec<BTreeMap<String, String>> {
+        let mut all_lines = self.read_all().clone();
+        let headers = all_lines.remove(0);
+        all_lines
+            .iter()
+            .map(|line_vec| {
+                line_vec
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, item)| (headers[i].clone(), item.clone()))
+                    .collect::<BTreeMap<String, String>>()
+            }).collect::<Vec<BTreeMap<String, String>>>()
     }
 
 
-    fn read_all(&mut self) -> Vec<Vec<String>> {
-        let mut buf = String::new();
+    fn read_all(&self) -> Vec<Vec<String>> {
         let field_regex = Regex::new(format!(r#"(("\w| |)[\w\d]+("|)(?<![{}\n\r]))"#, self.delimiter).as_str()).unwrap(); // Quotes and commas if available
 
-        self.file.read_to_string(&mut buf).expect("EOF not detected in file");
-
-        buf
+        self.file
+            .clone()
             .split(|ch| ch == CR || ch == LF)
             .map(|line| line.to_string())
+            .filter(|line| !line.is_empty())
             .map(|mut line| {
                 line.push(LF);
                 line
@@ -55,7 +77,7 @@ impl <'a> CSVParser<'a> {
             .map(|mut line| {
                 field_regex
                     .find_iter(line.as_str())
-                    .map(|found| found.as_str()
+                    .map(|found| found.expect("Malformed row detected.").as_str()
                         .trim()
                         .trim_end_matches('"')
                         .trim_start_matches('"')
