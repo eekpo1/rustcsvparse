@@ -24,6 +24,7 @@ impl Display for FileAccessError {
 pub struct CSVParser<'a> {
     file: String,
     has_headers: bool,
+    headers: Vec<String>,
     delimiter: &'a str,
 }
 
@@ -31,8 +32,9 @@ impl <'a> CSVParser<'a> {
     pub fn new(file_name: &str, has_headers: bool, delimiter: &'a str) -> Result<CSVParser<'a>, FileAccessError> {
         if let Ok(mut f) = File::open(file_name) {
             let mut buf = String::new();
+            let headers = vec![];
             f.read_to_string(&mut buf).expect("EOF not detected in file");
-            return Ok(CSVParser { file: buf, has_headers, delimiter });
+            return Ok(CSVParser { file: buf, has_headers, headers, delimiter });
         }
         Err(FileAccessError)
     }
@@ -61,11 +63,9 @@ impl <'a> CSVParser<'a> {
             }).collect::<Vec<BTreeMap<String, String>>>()
     }
 
-
-    fn read_all(&self) -> Vec<Vec<String>> {
-        let field_regex = Regex::new(format!(r#"(("\w| |)[\w\d]+("|)(?<![{}\n\r]))"#, self.delimiter).as_str()).unwrap(); // Quotes and commas if available
-
-        self.file
+    fn read_all(&mut self) -> Vec<Vec<String>> {
+        let field_regex = Regex::new(format!(r#"(("| |)([\w\d]|[^,\s\r])+("|)(?<![{}\n\r]))"#, self.delimiter).as_str()).unwrap(); // Quotes and commas if available
+        let mut csv_frame = self.file
             .clone()
             .split(|ch| ch == CR || ch == LF)
             .map(|line| line.to_string())
@@ -84,6 +84,12 @@ impl <'a> CSVParser<'a> {
                         .trim().to_string()
                     )
                     .collect::<Vec<String>>()
-            }).collect()
+            }).collect::<Vec<Vec<String>>>();
+
+        if self.has_headers == true && csv_frame.len() > 0 {
+            self.headers = csv_frame.pop().unwrap()
+        }
+
+        csv_frame
     }
 }
